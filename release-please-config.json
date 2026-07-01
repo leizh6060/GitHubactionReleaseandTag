@@ -1,0 +1,21 @@
+{
+  "releaseType": "node",
+  "bumpMinorPreMajor": false,
+  "bumpPatchForMinorPreMajor": false,
+  "draft": false,
+  "includeComponentInTag": false,
+  "packageName": "my-app",
+  "changelogSections": [
+    { "type": "feat",     "section": "Features" },
+    { "type": "fix",      "section": "Bug Fixes" },
+    { "type": "perf",     "section": "Performance" },
+    { "type": "revert",   "section": "Reverts" },
+    { "type": "refactor", "section": "Refactors" },
+    { "type": "test",     "section": "Tests" },
+    { "type": "build",    "section": "Build System" },
+    { "type": "ci",       "section": "Continuous Integration" },
+    { "type": "docs",     "section": "Documentation" },
+    { "type": "style",    "section": "Styles", "hidden": true },
+    { "type": "chore",    "section": "Miscellaneous Chores", "hidden": true }
+  ]
+}

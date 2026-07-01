@@ -1,0 +1,10 @@
+# node
+node_modules/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# logs
+*.log

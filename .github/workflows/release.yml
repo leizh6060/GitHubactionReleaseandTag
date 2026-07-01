@@ -1,0 +1,143 @@
+name: Release
+
+# ------------------------------------------------------------------
+# Triggers
+#   - push to main  : figure out the next semantic version from
+#                     conventional commits, tag, and publish a release.
+#   - workflow_dispatch: bump manually (major / minor / patch / no-bump).
+# ------------------------------------------------------------------
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Force release type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+          - no-bump
+      dry_run:
+        description: "Dry run (do not push tags or create a release)"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Bump & publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show last 20 commits between last tag and HEAD
+        id: log
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+          echo "range=${RANGE}" >> "$GITHUB_OUTPUT"
+          echo "prev_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+          echo "----- commits -----"
+          git log --no-merges --pretty=format:"%h %s" $RANGE || true
+          echo
+          echo "-------------------"
+
+      - name: Determine next version
+        id: next_version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PREV_TAG: ${{ steps.log.outputs.prev_tag }}
+          FORCE_TYPE: ${{ github.event.inputs.release_type }}
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/next-version.sh"
+
+      - name: Bump version in package.json (if present)
+        if: hashFiles('package.json') != '' && steps.next_version.outputs.bump != 'none'
+        env:
+          NEW_VERSION: ${{ steps.next_version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const fs=require('fs');
+            const p='package.json';
+            const j=JSON.parse(fs.readFileSync(p,'utf8'));
+            j.version='${NEW_VERSION}';
+            fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');
+          "
+
+      - name: Commit version bump
+        if: steps.next_version.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet package.json 2>/dev/null; then
+            echo "No package.json change, skipping commit"
+            exit 0
+          fi
+          git add package.json
+          git commit -m "chore(release): v${{ steps.next_version.outputs.new_version }}"
+          git push origin HEAD:main
+
+      - name: Create and push tag
+        id: tag
+        if: steps.next_version.outputs.bump != 'none' && github.event.inputs.dry_run != 'true'
+        env:
+          NEW_VERSION: ${{ steps.next_version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+          echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build changelog
+        if: steps.tag.outputs.tag != ''
+        env:
+          PREV_TAG: ${{ steps.log.outputs.prev_tag }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREV_TAG}" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+          {
+            echo "# Changes in ${TAG}"
+            echo
+            git log --no-merges --pretty=format:"- %h %s (%an)" ${RANGE}
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        if: steps.tag.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
+          generate_release_notes: false
